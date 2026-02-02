@@ -1,17 +1,17 @@
-# Airflow for Coinbase Realtime Analytics
+# Airflow + ClickHouse + MinIO Taxi Pipeline
 
-## Description
+## Overview
 
-This directory contains the Apache Airflow configuration for the DE Zoomcamp module "orchestration". Airflow is used for orchestrating workflows, including:
+This project orchestrates monthly NYC TLC taxi data loads with Apache Airflow:
 
-- ETL processes for NY_taxi data data
-- System monitoring
-- Report generation and analytics
+- Download taxi CSVs from the public TLC dataset
+- Upload files to MinIO (S3-compatible object store)
+- Create external S3 tables and load data into ClickHouse
 
 ## Requirements
 
 - Docker and Docker Compose
-- Python 3.9+
+- Python 3.9+ (only needed for local development)
 
 ## Quick Start
 
@@ -21,61 +21,80 @@ This directory contains the Apache Airflow configuration for the DE Zoomcamp mod
    cd airflow-clickhouse-s3-pipeline
    ```
 
-2. Create necessary directories:
+2. Create the shared Docker network:
    ```bash
-   mkdir -p orchestration/{dags,plugins,logs}
+   docker network create ny-taxi-network
    ```
 
-3. Start Airflow:
+3. Start MinIO and ClickHouse:
    ```bash
-   cd docker/airflow
-   docker-compose up -d
+   docker compose up -d
    ```
 
-4. Open the Airflow interface:
+4. Start Airflow:
+   ```bash
+   cd airflow
+   docker compose -f docker-compose.yaml up -d
+   ```
+
+5. Open the Airflow UI:
    ```
    http://localhost:8081
    ```
    - Login: `airflow`
    - Password: `airflow`
 
+## Services and Ports
+
+- Airflow UI: `http://localhost:8081`
+- MinIO console: `http://localhost:9001`
+- MinIO S3 endpoint: `http://localhost:9002`
+- ClickHouse HTTP: `http://localhost:8123`
+- ClickHouse native: `tcp://localhost:9000`
+- Postgres (Airflow metadata): `localhost:5445`
+
+Default credentials:
+
+- MinIO: `minio-user` / `minio-password`
+- ClickHouse: `default` / `clickhouse_password`
+- Airflow: `airflow` / `airflow`
+
 ## Available DAGs
 
-1. **coinbase_market_data_etl**
-   - Schedule: daily
-   - Description: ETL process for Coinbase market data
-
-2. **infrastructure_management**
-   - Schedule: weekly
-   - Description: Infrastructure management with Terraform
-
-3. **system_monitoring**
-   - Schedule: hourly
-   - Description: System monitoring
+- `minio_taxi_pipeline`: one-off load of a single taxi file
+- `minio_taxi_scheduled`: monthly scheduled load (all taxi types)
+- `green_taxi_scheduled`: monthly load for green taxis (2020)
+- `yellow_taxi_scheduled`: monthly load for yellow taxis (2020)
 
 ## Configuration
 
-All settings can be changed in the `.env` file. Key parameters:
+Defaults are embedded in the DAGs and can be overridden via Airflow Variables:
 
-- `AIRFLOW_UID` - Airflow user ID
-- `POSTGRES_USER`, `POSTGRES_PASSWORD` - PostgreSQL credentials
-- `CLICKHOUSE_HOST`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` - ClickHouse connection settings
+- `ACCESS_KEY_ID` / `SECRET_KEY_ID` / `ENDPOINT_URL`
+- `BUCKET_NAME` / `DATASET`
+- `REGION`
 
-## Creating Custom DAGs
+ClickHouse connection is configured in `airflow/docker-compose.yaml` via
+`AIRFLOW_CONN_CLICKHOUSE_DEFAULT`.
 
-1. Create a new Python file in the `orchestration/dags/` directory
-2. Use the standard Airflow DAG format
-3. The DAG will automatically appear in the Airflow interface
-
-## Debugging
-
-To view logs, use:
+## Backfill Example
 
 ```bash
-docker-compose logs -f airflow-standalone
+docker exec -it airflow-standalone bash
+
+airflow dags backfill minio_taxi_scheduled \
+  --start-date "2020-02-01" \
+  --end-date "2020-12-01"
 ```
 
-## Additional Information
+## Logs
 
-- [Airflow Documentation](https://airflow.apache.org/docs/)
-- [Airflow Providers](https://airflow.apache.org/docs/apache-airflow-providers/) 
+```bash
+docker compose -f airflow/docker-compose.yaml logs -f airflow-standalone
+```
+
+## Additional Resources
+
+- Airflow docs: https://airflow.apache.org/docs/
+- ClickHouse docs: https://clickhouse.com/docs/
+- MinIO docs: https://min.io/docs/
