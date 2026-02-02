@@ -1,0 +1,114 @@
+x-airflow-common:
+  &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    &airflow-common-env
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__STORE_SERIALIZED_DAGS: 'true'
+    AIRFLOW__CORE__TEST_CONNECTION: Enabled
+    AIRFLOW__CORE__ALLOWED_DESERIALIZATION_CLASSES: airflow.*
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow/airflow
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 5
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 5
+    AIRFLOW__WEBSERVER__SECRET_KEY: secret
+    AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: 'http://localhost:8793'
+    # ClickHouse connection
+    AIRFLOW_CONN_CLICKHOUSE_DEFAULT: 'clickhouse://default:clickhouse_password@clickhouse:9000/default'
+  volumes:
+    - ../orchestration/dags:/opt/airflow/dags
+    - ../orchestration/plugins:/opt/airflow/plugins
+    - ../orchestration/logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres-airflow:
+      condition: service_healthy
+  networks:
+    - default
+    - ny-taxi-network
+
+services:
+  postgres-airflow:
+    image: postgres:16
+    ports:
+      - "5445:5432"
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-af-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - default
+      - ny-taxi-network
+
+  airflow-standalone:
+    <<: *airflow-common
+    container_name: airflow-standalone
+    ports:
+      - "8081:8080"
+    command: standalone
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    mem_reservation: "500M"
+    mem_limit: "2G"
+    depends_on:
+      <<: *airflow-common-depends-on
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    command:
+      - bash
+      - -c
+      - |
+        airflow db init
+        airflow db migrate
+        airflow users create \
+          -e airflow@example.com \
+          -f airflow \
+          -l airflow \
+          -r Admin \
+          -u airflow \
+          -p airflow
+        
+        # Create ClickHouse connection
+        airflow connections delete 'clickhouse_default' || true
+        airflow connections add 'clickhouse_default' \
+          --conn-type 'clickhouse' \
+          --conn-login 'default' \
+          --conn-password 'clickhouse_password' \
+          --conn-host 'clickhouse' \
+          --conn-port '9000' \
+          --conn-schema 'default'
+        
+        echo "Airflow initialization completed!"
+    user: "0:0"
+    depends_on:
+      <<: *airflow-common-depends-on
+
+networks:
+  default:
+    driver: bridge
+  ny-taxi-network:
+    external: true
+    name: ny-taxi-network
+
+volumes:
+  postgres-af-volume: 

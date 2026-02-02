@@ -1,0 +1,52 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.1
+    hostname: clickhouse
+    restart: on-failure
+    container_name: clickhouse
+    ports:
+      - 8123:8123  # HTTP interface
+      - 9000:9000  # Native protocol
+    environment:
+      - CLICKHOUSE_DB=default
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=clickhouse_password
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    networks:
+      - ny-taxi-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  object-store:
+    image: minio/minio:RELEASE.2024-03-30T09-41-56Z
+    environment:
+      - MINIO_ROOT_USER=minio-user
+      - MINIO_ROOT_PASSWORD=minio-password
+    volumes:
+      - minio-data:/data
+    ports:
+      - 9001:9001
+      - 9002:9000
+    command: ["server", "/data", "--console-address", ":9001"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 2s
+      retries: 5
+    networks:
+      - ny-taxi-network
+
+networks:
+  ny-taxi-network:
+    external: true
+    name: ny-taxi-network
+
+volumes:
+  clickhouse-data:
+  minio-data:
+    driver: local
